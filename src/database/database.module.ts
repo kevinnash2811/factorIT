@@ -6,6 +6,8 @@ import { CentroCostoEntity } from './entities/centro-costo.entity';
 import { SolicitudGastoEntity } from './entities/solicitud-gasto.entity';
 import { BitacoraAuditoriaEntity } from './entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.entity';
+import { ErpTractaEntity } from './entities/erp-tracta.entity';
+import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity';
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.enti
           SolicitudGastoEntity,
           BitacoraAuditoriaEntity,
           LineaAjusteContableEntity,
+          ErpTractaEntity,
+          PreferenciaUsuarioEntity,
         ],
         // Nunca en true: el esquema ya existe y lo gestiona schema.sql / migraciones.
         synchronize: false,
@@ -38,6 +42,8 @@ import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.enti
       SolicitudGastoEntity,
       BitacoraAuditoriaEntity,
       LineaAjusteContableEntity,
+      ErpTractaEntity,
+          PreferenciaUsuarioEntity,
     ]),
   ],
   exports: [TypeOrmModule],

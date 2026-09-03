@@ -35,12 +35,48 @@ export class DominioException extends HttpException {
     );
   }
 
+  static rutaNoEncontrada(rutaId: string): DominioException {
+    return new DominioException(
+      'NO_ENCONTRADO',
+      'Ruta contable no encontrada',
+      `No existe una ruta con id ${rutaId} en la matriz de reglas.`,
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
+  static rutaDuplicada(rutaId: string): DominioException {
+    return new DominioException(
+      'REGLA_NEGOCIO',
+      'Ruta contable duplicada',
+      `Ya existe una ruta con el ID ${rutaId} en la matriz de reglas.`,
+      HttpStatus.CONFLICT,
+    );
+  }
+
+  static cuentaTractaNoEncontrada(sec: number): DominioException {
+    return new DominioException(
+      'NO_ENCONTRADO',
+      'Cuenta TRACTA no encontrada',
+      `No existe una cuenta TRACTA con secuencia ${sec}.`,
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
   static solicitudNoEncontrada(id: string): DominioException {
     return new DominioException(
       'NO_ENCONTRADO',
       'Solicitud no encontrada',
       `No existe una solicitud con id ${id}.`,
       HttpStatus.NOT_FOUND,
+    );
+  }
+
+  static transicionInvalida(estadoActual: string, accion: string): DominioException {
+    return new DominioException(
+      'REGLA_NEGOCIO',
+      'Transición de estado inválida',
+      `No se puede ejecutar "${accion}" sobre una solicitud en estado ${estadoActual}.`,
+      HttpStatus.CONFLICT,
     );
   }
 

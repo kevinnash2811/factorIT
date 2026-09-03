@@ -17,6 +17,12 @@ export class RutaPagoEntity {
   @Column({ name: 'requiere_documento_respaldo', type: 'boolean', default: true })
   requiereDocumentoRespaldo: boolean;
 
+  @Column({ name: 'confidencial', type: 'boolean', default: false })
+  confidencial: boolean;
+
+  @Column({ name: 'activo', type: 'boolean', default: true })
+  activo: boolean;
+
   @Column({ name: 'creado_en', type: 'timestamptz', nullable: true })
   creadoEn: Date;
 }

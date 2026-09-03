@@ -6,9 +6,9 @@ export interface EstadoResuelto {
 
 const ESTADOS: Record<string, EstadoResuelto> = {
   PENDIENTE_APROBACION: { codigo: 'PENDIENTE_APROBACION', etiqueta: 'Pendiente VB', color: '#f59e0b' },
-  APROBADO_CONTABILIZAR: { codigo: 'APROBADO_CONTABILIZAR', etiqueta: 'Aprobado Cont.', color: '#10b981' },
+  APROBADO_CONTABILIZAR: { codigo: 'APROBADO_CONTABILIZAR', etiqueta: 'Aprobado Cont.', color: '#f59e0b' },
   EN_REPARO: { codigo: 'EN_REPARO', etiqueta: 'En Reparo', color: '#ef4444' },
-  INTEGRADO_SAP: { codigo: 'INTEGRADO_SAP', etiqueta: 'Integrado SAP', color: '#3b82f6' },
+  INTEGRADO_SAP: { codigo: 'INTEGRADO_SAP', etiqueta: 'Integrado SAP', color: '#10b981' },
   ERROR_SAP: { codigo: 'ERROR_SAP', etiqueta: 'Error SAP', color: '#dc2626' },
   RECHAZADO_CERRADO: { codigo: 'RECHAZADO_CERRADO', etiqueta: 'Rechazado', color: '#64748b' },
 };

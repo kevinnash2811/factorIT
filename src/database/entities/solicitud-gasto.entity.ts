@@ -93,4 +93,7 @@ export class SolicitudGastoEntity {
 
   @Column({ name: 'nro_documento_sap', type: 'varchar', length: 50, nullable: true })
   nroDocumentoSap: string | null;
+
+  @Column({ name: 'descripcion_detalle', type: 'text', nullable: true })
+  descripcionDetalle: string | null;
 }

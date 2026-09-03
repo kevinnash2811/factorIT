@@ -9,6 +9,20 @@ class SolicitanteDto {
 
   @ApiProperty({ example: 'MS' })
   iniciales: string;
+
+  @ApiProperty({ example: 'Analista Contable', nullable: true })
+  cargo: string | null;
+
+  @ApiProperty({ example: 'Subgerencia de Contabilidad', nullable: true, description: 'Gerencia declarada por quien ingresa la solicitud.' })
+  gerencia: string | null;
+}
+
+class CecoDto {
+  @ApiProperty({ example: 'CEBE0099' })
+  id: string;
+
+  @ApiProperty({ example: 'Gerencia de Beneficios Sociales', description: 'Gerencia dueña del centro de costo — es la que carga el gasto en su presupuesto.' })
+  gerencia: string;
 }
 
 class MontoDto {
@@ -76,11 +90,23 @@ export class SolicitudListItemDto {
   @ApiProperty({ type: MontoDto })
   monto: MontoDto;
 
+  @ApiProperty({ example: '2026-07-24', description: 'Fecha de creación, formato YYYY-MM-DD' })
+  fechaCreacion: string;
+
   @ApiProperty({ type: RutaDto })
   ruta: RutaDto;
 
   @ApiProperty({ example: '1000' })
   sociedad: string;
+
+  @ApiProperty({ type: CecoDto })
+  ceco: CecoDto;
+
+  @ApiProperty({ example: 'FAC-8874', nullable: true })
+  numeroFactura: string | null;
+
+  @ApiProperty({ example: 'TRANSFERENCIA', nullable: true })
+  medioPago: string | null;
 
   @ApiProperty({ type: EstadoDto })
   estado: EstadoDto;
@@ -110,6 +136,9 @@ export class SolicitudesPaginadasDto {
 
   @ApiProperty({ example: 143 })
   total: number;
+
+  @ApiProperty({ example: 284500000, description: 'Suma de monto_clp de TODOS los resultados que cumplen el filtro (no solo la página actual). Los montos enmascarados por confidencialidad no se excluyen del total.' })
+  montoTotalFiltrado: number;
 
   @ApiProperty({ type: [SolicitudListItemDto] })
   items: SolicitudListItemDto[];

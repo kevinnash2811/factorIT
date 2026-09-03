@@ -1,13 +1,22 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { join } from 'path';
+import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.enableCors();
+
+  const uploadsDir = join(process.cwd(), 'uploads');
+  if (!existsSync(uploadsDir)) mkdirSync(uploadsDir, { recursive: true });
+  // Sirve los archivos subidos por /documentos en /documentos/archivos/<nombre>.
+  // Almacenamiento provisional en disco — ver nota en documentos.controller.ts.
+  app.useStaticAssets(uploadsDir, { prefix: '/documentos/archivos' });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -28,6 +37,8 @@ async function bootstrap() {
     .setVersion('0.1.0')
     .addTag('Solicitudes')
     .addTag('Catálogos')
+    .addTag('Indicadores')
+    .addTag('Documentos')
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);

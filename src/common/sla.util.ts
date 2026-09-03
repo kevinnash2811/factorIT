@@ -14,7 +14,7 @@ export interface SlaResuelto {
  */
 export function resolverSla(estadoSolicitud: string, fechaLimiteSla: Date | null): SlaResuelto {
   if (estadoSolicitud === 'INTEGRADO_SAP') {
-    return { estado: 'CUMPLIDO', etiqueta: 'Cumplido', color: '#3b82f6', venceEn: null };
+    return { estado: 'CUMPLIDO', etiqueta: 'Cumplido', color: '#10b981', venceEn: null };
   }
 
   if (!fechaLimiteSla) {

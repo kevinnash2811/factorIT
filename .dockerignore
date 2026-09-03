@@ -1,0 +1,27 @@
+# Se reinstalan dentro de la imagen con npm ci — copiarlos desde Windows
+# además rompería cualquier binario nativo compilado para otra plataforma.
+node_modules
+dist
+
+# El contenedor recibe la configuración por environment del compose, no por archivo.
+# Copiarlo hornearía credenciales dentro de la imagen.
+.env
+.env.local
+.env.*.local
+
+# Adjuntos: son datos, van en un volumen (ver docker-compose.yml).
+uploads
+
+.git
+.gitignore
+coverage
+.nyc_output
+test
+*.tsbuildinfo
+npm-debug.log*
+.vscode
+.idea
+.DS_Store
+README.md
+Dockerfile
+.dockerignore

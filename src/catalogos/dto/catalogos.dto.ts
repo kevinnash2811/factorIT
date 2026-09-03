@@ -34,4 +34,16 @@ export class CatalogosDto {
 
   @ApiProperty({ example: [{ codigo: 'TRANSFERENCIA', etiqueta: 'Transferencia' }, { codigo: 'CHEQUE', etiqueta: 'Cheque' }] })
   mediosPago: { codigo: string; etiqueta: string }[];
+
+  @ApiProperty({ example: [{ codigo: 'BANCO DE CHILE', etiqueta: 'BANCO DE CHILE' }] })
+  bancos: { codigo: string; etiqueta: string }[];
+
+  @ApiProperty({ example: [{ codigo: 'Corriente', etiqueta: 'Cuenta Corriente' }] })
+  tiposCuenta: { codigo: string; etiqueta: string }[];
+
+  @ApiProperty({ example: [{ codigo: '1000', etiqueta: 'Sociedad 1000 (Caja Los Andes)' }] })
+  sociedades: { codigo: string; etiqueta: string }[];
+
+  @ApiProperty({ example: [{ codigo: 'KA', etiqueta: 'KA (Acreedor Gasto)' }] })
+  clasesDocumento: { codigo: string; etiqueta: string }[];
 }

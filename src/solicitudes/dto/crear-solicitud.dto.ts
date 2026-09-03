@@ -162,6 +162,11 @@ export class CrearSolicitudDto {
   @IsString()
   documentoPesoKb?: string;
 
+  @ApiPropertyOptional({ example: 'Reembolso correspondiente a rendición de cuentas por concepto de servicios y provisiones de cierres contables mensuales.' })
+  @IsOptional()
+  @IsString()
+  descripcionDetalle?: string;
+
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   esAjusteContable?: boolean;
