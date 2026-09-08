@@ -8,6 +8,8 @@ import { BitacoraAuditoriaEntity } from './entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.entity';
 import { ErpTractaEntity } from './entities/erp-tracta.entity';
 import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity';
+import { UsuarioWorkflowEntity } from './entities/usuario-workflow.entity';
+import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity'
           LineaAjusteContableEntity,
           ErpTractaEntity,
           PreferenciaUsuarioEntity,
+          UsuarioWorkflowEntity,
+          PerfilPermisoEntity,
         ],
         // Nunca en true: el esquema ya existe y lo gestiona schema.sql / migraciones.
         synchronize: false,
@@ -44,6 +48,8 @@ import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity'
       LineaAjusteContableEntity,
       ErpTractaEntity,
           PreferenciaUsuarioEntity,
+          UsuarioWorkflowEntity,
+          PerfilPermisoEntity,
     ]),
   ],
   exports: [TypeOrmModule],

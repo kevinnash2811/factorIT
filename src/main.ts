@@ -6,6 +6,8 @@ import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/http-exception.filter';
+import { ConfigService } from '@nestjs/config';
+import { TokenGuard } from './common/token.guard';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -27,6 +29,9 @@ async function bootstrap() {
   );
 
   app.useGlobalFilters(new HttpExceptionFilter());
+
+  // Llave compartida: solo aplica si API_TOKEN está definido en el entorno.
+  app.useGlobalGuards(new TokenGuard(app.get(ConfigService)));
 
   const config = new DocumentBuilder()
     .setTitle('BFF Workflow de Solicitudes — CLA')
