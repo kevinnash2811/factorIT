@@ -53,6 +53,56 @@ export class DominioException extends HttpException {
     );
   }
 
+  static oracleNoDisponible(codigo: string): DominioException {
+    return new DominioException(
+      'CIRCUITO_ABIERTO',
+      'Oracle no disponible',
+      `No se pudo completar la operación en Oracle (${codigo}). Intenta nuevamente en unos minutos.`,
+      HttpStatus.SERVICE_UNAVAILABLE,
+      true,
+    );
+  }
+
+  static oracleSinPermiso(): DominioException {
+    return new DominioException(
+      'NO_AUTORIZADO',
+      'Sin permiso en Oracle',
+      'El usuario de base de datos configurado en el BFF no tiene permiso para esta operación en Oracle. Hay que solicitarlo al DBA.',
+      HttpStatus.FORBIDDEN,
+    );
+  }
+
+  static registroOracleBloqueado(): DominioException {
+    return new DominioException(
+      'REGLA_NEGOCIO',
+      'Regla en edición',
+      'Otra operación está modificando esta regla en Oracle. Intenta nuevamente en unos segundos.',
+      HttpStatus.CONFLICT,
+      true,
+    );
+  }
+
+  static oracleRechazoDatos(detalle: string): DominioException {
+    return new DominioException(
+      'VALIDACION',
+      'Oracle rechazó los datos',
+      detalle,
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  static cuentaTractaDuplicada(
+    clave: { empresa: string; sistema: string; transaccion: string },
+    secExistente: number,
+  ): DominioException {
+    return new DominioException(
+      'REGLA_NEGOCIO',
+      'Regla contable duplicada',
+      `Ya existe una regla activa (secuencia ${secExistente}) para la empresa ${clave.empresa}, sistema ${clave.sistema} y transacción ${clave.transaccion}. Edita esa regla o dala de baja primero.`,
+      HttpStatus.CONFLICT,
+    );
+  }
+
   static cuentaTractaNoEncontrada(sec: number): DominioException {
     return new DominioException(
       'NO_ENCONTRADO',
