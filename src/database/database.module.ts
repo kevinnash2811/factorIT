@@ -6,11 +6,12 @@ import { CentroCostoEntity } from './entities/centro-costo.entity';
 import { SolicitudGastoEntity } from './entities/solicitud-gasto.entity';
 import { BitacoraAuditoriaEntity } from './entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.entity';
-import { ErpTractaEntity } from './entities/erp-tracta.entity';
 import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity';
 import { UsuarioWorkflowEntity } from './entities/usuario-workflow.entity';
 import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
 
+// Cuentas Contables (ERP_TRACTA) no está acá: vive en Oracle y se accede por
+// OracleService, no por TypeORM.
 @Module({
   imports: [
     TypeOrmModule.forRootAsync({
@@ -30,7 +31,6 @@ import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
           SolicitudGastoEntity,
           BitacoraAuditoriaEntity,
           LineaAjusteContableEntity,
-          ErpTractaEntity,
           PreferenciaUsuarioEntity,
           UsuarioWorkflowEntity,
           PerfilPermisoEntity,
@@ -46,7 +46,6 @@ import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
       SolicitudGastoEntity,
       BitacoraAuditoriaEntity,
       LineaAjusteContableEntity,
-      ErpTractaEntity,
           PreferenciaUsuarioEntity,
           UsuarioWorkflowEntity,
           PerfilPermisoEntity,

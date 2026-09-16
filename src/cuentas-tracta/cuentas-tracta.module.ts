@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { ErpTractaEntity } from '../database/entities/erp-tracta.entity';
+import { OracleModule } from '../oracle/oracle.module';
 import { CuentasTractaController } from './cuentas-tracta.controller';
 import { CuentasTractaService } from './cuentas-tracta.service';
+import { TractaOracleRepository } from './tracta-oracle.repository';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ErpTractaEntity])],
+  imports: [OracleModule],
   controllers: [CuentasTractaController],
-  providers: [CuentasTractaService],
+  providers: [CuentasTractaService, TractaOracleRepository],
 })
 export class CuentasTractaModule {}

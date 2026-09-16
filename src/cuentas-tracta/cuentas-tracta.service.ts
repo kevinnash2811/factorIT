@@ -1,11 +1,42 @@
-import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { ErpTractaEntity } from '../database/entities/erp-tracta.entity';
-import { CuentaTractaItemDto, CuentasTractaListadoDto, ListarCuentasTractaQueryDto } from './dto/cuenta-tracta.dto';
-import { CrearCuentaTractaDto } from './dto/crear-cuenta-tracta.dto';
-import { ActualizarCuentaTractaDto } from './dto/actualizar-cuenta-tracta.dto';
+import { Injectable, OnModuleInit } from '@nestjs/common';
 import { DominioException } from '../common/dominio.exception';
+import { CLASES_DOCUMENTO, SOCIEDADES } from '../common/rutas-catalogo.util';
+import {
+  EstadoOracle,
+  OracleService,
+  TransaccionOracle,
+} from '../oracle/oracle.service';
+import { ActualizarCuentaTractaDto } from './dto/actualizar-cuenta-tracta.dto';
+import { CrearCuentaTractaDto } from './dto/crear-cuenta-tracta.dto';
+import {
+  CuentaTractaItemDto,
+  CuentasTractaListadoDto,
+  ListarCuentasTractaQueryDto,
+  OpcionesCuentasTractaDto,
+} from './dto/cuenta-tracta.dto';
+import { TractaOracleRepository } from './tracta-oracle.repository';
+import {
+  aDatosOracle,
+  ClaveTracta,
+  ESTADO_ACTIVO,
+  ESTADO_INACTIVO,
+  estaActiva,
+  FilaTractaOracle,
+  mapearFilaOracle,
+  TIPOS_CUENTA_TRACTA,
+} from './tracta-oracle.mapeo';
+
+/** Filas por página cuando no se indica: la tabla real tiene más de 9.000 reglas. */
+const TAMANO_POR_DEFECTO = 50;
+
+/** Al crear no hay regla propia que excluir de la búsqueda de duplicadas. */
+const SIN_EXCLUSION = -1;
+
+const ETIQUETAS_TIPO_CUENTA: Record<string, string> = {
+  S: 'S - Cuenta de mayor',
+  K: 'K - Acreedor',
+  D: 'D - Deudor',
+};
 
 /**
  * Un Select de Retool sin selección manda literalmente el texto "undefined"
@@ -17,148 +48,197 @@ import { DominioException } from '../common/dominio.exception';
 function valorFiltro(valor?: string): string | undefined {
   if (!valor) return undefined;
   const limpio = valor.trim();
-  if (limpio === '' || limpio === 'undefined' || limpio === 'null') return undefined;
+  if (limpio === '' || limpio === 'undefined' || limpio === 'null') {
+    return undefined;
+  }
   return limpio;
 }
 
+/**
+ * Parametrización de Cuentas Contables sobre Oracle ERP_TRACTA.
+ *
+ * Cada escritura corre en una transacción: la regla se bloquea, se valida y
+ * se modifica, y todo se confirma junto o no se confirma nada.
+ */
 @Injectable()
-export class CuentasTractaService {
+export class CuentasTractaService implements OnModuleInit {
   constructor(
-    @InjectRepository(ErpTractaEntity)
-    private readonly tractaRepo: Repository<ErpTractaEntity>,
+    private readonly oracle: OracleService,
+    private readonly repo: TractaOracleRepository,
   ) {}
 
-  async listar(query: ListarCuentasTractaQueryDto): Promise<CuentasTractaListadoDto> {
-    const sociedad = valorFiltro(query.sociedad);
-    const sistema = valorFiltro(query.sistema);
-    const q = valorFiltro(query.q);
-
-    // Más reciente primero: tct_secuencia es SERIAL, así que el valor más
-    // alto es siempre el último registro creado.
-    const qb = this.tractaRepo.createQueryBuilder('t').orderBy('t.tctSecuencia', 'DESC');
-
-    if (sociedad) qb.andWhere('t.erpEmpresa = :sociedad', { sociedad });
-    if (sistema) qb.andWhere('t.sisSistema = :sistema', { sistema });
-    if (q) {
-      qb.andWhere(
-        '(t.tctGlosaTrans ILIKE :q OR t.tctTransaccion ILIKE :q OR t.tctCuentaSap ILIKE :q OR t.tctCtaAux ILIKE :q OR t.cenNumcen ILIKE :q)',
-        { q: `%${q}%` },
+  /** Sin Oracle la pantalla no funciona: mejor fallar al arrancar que en la primera consulta. */
+  onModuleInit(): void {
+    if (!this.oracle.configurado()) {
+      throw new Error(
+        'Cuentas Contables usa Oracle (ERP_TRACTA): faltan ORACLE_USER, ORACLE_PASSWORD u ORACLE_CONNECT_STRING en el entorno.',
       );
     }
+  }
 
-    const [rows, sociedades, sistemas] = await Promise.all([
-      qb.getMany(),
-      this.tractaRepo
-        .createQueryBuilder('t')
-        .select('DISTINCT t.erpEmpresa', 'valor')
-        .orderBy('valor', 'ASC')
-        .getRawMany<{ valor: string }>(),
-      this.tractaRepo
-        .createQueryBuilder('t')
-        .select('DISTINCT t.sisSistema', 'valor')
-        .orderBy('valor', 'ASC')
-        .getRawMany<{ valor: string }>(),
-    ]);
+  estadoConexion(): Promise<EstadoOracle> {
+    return this.oracle.verificar();
+  }
 
+  async listar(
+    query: ListarCuentasTractaQueryDto,
+  ): Promise<CuentasTractaListadoDto> {
+    const pagina = query.pagina ?? 1;
+    const tamano = query.tamano ?? TAMANO_POR_DEFECTO;
+    const resultado = await this.repo.listar(
+      {
+        sociedad: valorFiltro(query.sociedad),
+        sistema: valorFiltro(query.sistema),
+        q: valorFiltro(query.q),
+      },
+      pagina,
+      tamano,
+    );
     return {
-      items: rows.map((r) => this.mapear(r)),
-      sociedadesDisponibles: sociedades.map((s) => s.valor),
-      sistemasDisponibles: sistemas.map((s) => s.valor),
+      items: resultado.items,
+      sociedadesDisponibles: resultado.sociedades,
+      sistemasDisponibles: resultado.sistemas,
+      total: resultado.total,
+      pagina,
+      tamano,
     };
   }
 
   /**
-   * Solo se piden los campos que muestra el formulario (ver imagen de
-   * referencia de Workflow_Contabilidad) — el resto de columnas de
-   * erp_tracta (tct_debe_haber, tct_agrupa, tct_suc_agrupa, tct_con_cme,
-   * etc.) se dejan sin asignar a propósito para que Postgres aplique sus
-   * propios DEFAULT del esquema, igual que hace el "Metadatos Oracle
-   * Sincronizados" del mock (D / NAC / VOU). tct_secuencia tampoco se toca:
-   * es SERIAL, la base la autogenera sola.
+   * Opciones de los selectores. Salen de los datos de Oracle y no del catálogo
+   * de la Matriz de Reglas, que no tiene, por ejemplo, la sociedad 2000 ni la
+   * clase ZK. Del catálogo solo se toman los nombres cuando existen.
    */
-  async crear(dto: CrearCuentaTractaDto): Promise<CuentaTractaItemDto> {
-    const nueva = this.tractaRepo.create({
-      erpEmpresa: dto.erpEmpresa,
-      sisSistema: dto.sisSistema,
-      tctTransaccion: dto.tctTransaccion,
-      tctGlosaTrans: dto.tctGlosaTrans,
-      tctClaseCuenta: dto.tctClaseCuenta,
-      parTipodocCaja: dto.parTipodocCaja,
-      tctCuentaSap: dto.tctCuentaSap,
-      tctCtaAux: dto.tctCtaAux,
-      tctContraCta: dto.tctContraCta,
-      tctCentroBenef: dto.tctCentroBenef,
-      cenNumcen: dto.cenNumcen,
-      tctValUni: dto.tctValUni ?? 1,
-      tctEstado: dto.tctEstado ?? 'A',
-    });
-    const guardada = await this.tractaRepo.save(nueva);
-    return this.mapear(guardada);
+  async opciones(): Promise<OpcionesCuentasTractaDto> {
+    const valores = await this.repo.obtenerOpciones();
+    return {
+      sociedades: valores.sociedades.map((codigo) => ({
+        codigo,
+        etiqueta: SOCIEDADES[codigo]
+          ? `${codigo} - ${SOCIEDADES[codigo].nombre}`
+          : `Sociedad ${codigo}`,
+      })),
+      sistemas: valores.sistemas.map((codigo) => ({
+        codigo,
+        etiqueta: codigo,
+      })),
+      tiposCuenta: TIPOS_CUENTA_TRACTA.map((codigo) => ({
+        codigo,
+        etiqueta: ETIQUETAS_TIPO_CUENTA[codigo],
+      })),
+      clasesDocumento: valores.clasesDocumento.map((codigo) => ({
+        codigo,
+        etiqueta: CLASES_DOCUMENTO[codigo]
+          ? `${codigo} - ${CLASES_DOCUMENTO[codigo]}`
+          : codigo,
+      })),
+    };
   }
 
-  async actualizar(sec: number, dto: ActualizarCuentaTractaDto): Promise<CuentaTractaItemDto> {
-    const cuenta = await this.tractaRepo.findOneBy({ tctSecuencia: sec });
-    if (!cuenta) throw DominioException.cuentaTractaNoEncontrada(sec);
+  crear(dto: CrearCuentaTractaDto): Promise<CuentaTractaItemDto> {
+    // Valor unitario 1 si no viene, igual que la versión anterior de la pantalla.
+    const datos = aDatosOracle(dto, 1);
+    const estado = dto.tctEstado === 'I' ? ESTADO_INACTIVO : ESTADO_ACTIVO;
 
-    cuenta.erpEmpresa = dto.erpEmpresa;
-    cuenta.sisSistema = dto.sisSistema;
-    cuenta.tctTransaccion = dto.tctTransaccion;
-    cuenta.tctGlosaTrans = dto.tctGlosaTrans;
-    cuenta.tctClaseCuenta = dto.tctClaseCuenta;
-    cuenta.parTipodocCaja = dto.parTipodocCaja;
-    cuenta.tctCuentaSap = dto.tctCuentaSap;
-    cuenta.tctCtaAux = dto.tctCtaAux ?? null;
-    cuenta.tctContraCta = dto.tctContraCta ?? null;
-    cuenta.tctCentroBenef = dto.tctCentroBenef ?? null;
-    cuenta.cenNumcen = dto.cenNumcen ?? null;
-    cuenta.tctValUni = dto.tctValUni ?? 1;
-    await this.tractaRepo.save(cuenta);
-    return this.mapear(cuenta);
+    return this.oracle.transaccion(async (tx) => {
+      if (estado === ESTADO_ACTIVO) {
+        await this.exigirSinDuplicada(tx, datos, SIN_EXCLUSION);
+      }
+      const sec = await this.repo.insertar(tx, datos, estado);
+      return this.leer(tx, sec);
+    });
+  }
+
+  actualizar(
+    sec: number,
+    dto: ActualizarCuentaTractaDto,
+  ): Promise<CuentaTractaItemDto> {
+    const datos = aDatosOracle(dto, null);
+
+    return this.oracle.transaccion(async (tx) => {
+      const actual = await this.exigirExistente(tx, sec);
+      const cambiaClave =
+        actual.ERP_EMPRESA !== datos.empresa ||
+        actual.SIS_SISTEMA !== datos.sistema ||
+        actual.TCT_TRANSACCION !== datos.transaccion;
+      if (cambiaClave && estaActiva(actual.TCT_ESTADO)) {
+        await this.exigirSinDuplicada(tx, datos, sec);
+      }
+      // Si el formulario no manda valor unitario, se conserva el que tenía.
+      await this.repo.actualizarDatos(
+        tx,
+        sec,
+        datos,
+        dto.tctValUni !== undefined,
+      );
+      return this.leer(tx, sec);
+    });
   }
 
   /**
-   * No se borra la fila: erp_tracta es el motor de reglas que ya se usó para
-   * asentar transacciones — perder la regla rompería la trazabilidad de lo
-   * ya conciliado en SAP. "Eliminar" reutiliza el propio campo tct_estado
-   * (A/I) que ya existe en la tabla en vez de agregar una columna nueva:
-   * marcarla "I" la bloquea (deja de listarse como opción activa) igual que
-   * el patrón activo=false de rutas_pago.
+   * No se borra la fila: ERP_TRACTA es el motor de reglas que ya se usó para
+   * asentar transacciones, y perder la regla rompería la trazabilidad de lo
+   * ya conciliado en SAP. Se marca inactiva (TCT_ESTADO = '0') y la
+   * contabilización deja de usarla.
    */
   async eliminar(sec: number): Promise<void> {
-    const cuenta = await this.tractaRepo.findOneBy({ tctSecuencia: sec });
-    if (!cuenta) throw DominioException.cuentaTractaNoEncontrada(sec);
-
-    cuenta.tctEstado = 'I';
-    await this.tractaRepo.save(cuenta);
+    await this.oracle.transaccion(async (tx) => {
+      await this.exigirExistente(tx, sec);
+      await this.repo.cambiarEstado(tx, sec, ESTADO_INACTIVO);
+    });
   }
 
-  async reactivar(sec: number): Promise<CuentaTractaItemDto> {
-    const cuenta = await this.tractaRepo.findOneBy({ tctSecuencia: sec });
-    if (!cuenta) throw DominioException.cuentaTractaNoEncontrada(sec);
-
-    cuenta.tctEstado = 'A';
-    await this.tractaRepo.save(cuenta);
-    return this.mapear(cuenta);
+  reactivar(sec: number): Promise<CuentaTractaItemDto> {
+    return this.oracle.transaccion(async (tx) => {
+      const actual = await this.exigirExistente(tx, sec);
+      if (!estaActiva(actual.TCT_ESTADO)) {
+        await this.exigirSinDuplicada(
+          tx,
+          {
+            empresa: actual.ERP_EMPRESA,
+            sistema: actual.SIS_SISTEMA,
+            transaccion: actual.TCT_TRANSACCION ?? '',
+          },
+          sec,
+        );
+        await this.repo.cambiarEstado(tx, sec, ESTADO_ACTIVO);
+      }
+      return this.leer(tx, sec);
+    });
   }
 
-  private mapear(r: ErpTractaEntity): CuentaTractaItemDto {
-    return {
-      sec: r.tctSecuencia,
-      emp: r.erpEmpresa,
-      sis: r.sisSistema,
-      transaccion: r.tctTransaccion,
-      glosa: r.tctGlosaTrans,
-      tCta: r.tctClaseCuenta,
-      ctaMayorSap: r.tctCuentaSap,
-      ctaAuxiliarSap: r.tctCtaAux,
-      contraCtaSap: r.tctContraCta,
-      tDoc: r.parTipodocCaja,
-      cebeSap: r.tctCentroBenef,
-      cencosSap: r.cenNumcen,
-      valU: r.tctValUni,
-      estadoEtiqueta: r.tctEstado === 'A' ? 'ACTIVO' : 'INACTIVO',
-      estadoColor: r.tctEstado === 'A' ? '#10b981' : '#64748b',
-      acciones: r.tctEstado === 'A' ? ['editar', 'eliminar'] : ['reactivar'],
-    };
+  /** Obtiene la regla bloqueándola hasta que termine la transacción. */
+  private async exigirExistente(
+    tx: TransaccionOracle,
+    sec: number,
+  ): Promise<FilaTractaOracle> {
+    const fila = await this.repo.obtenerParaModificar(tx, sec);
+    if (!fila) throw DominioException.cuentaTractaNoEncontrada(sec);
+    return fila;
+  }
+
+  /**
+   * La contabilización busca la regla activa por su clave: con dos activas
+   * iguales elegiría cualquiera de las dos. Ya hay claves repetidas heredadas
+   * (sobre todo en CAJ); esta validación evita que aparezcan nuevas.
+   */
+  private async exigirSinDuplicada(
+    tx: TransaccionOracle,
+    clave: ClaveTracta,
+    excluirSec: number,
+  ): Promise<void> {
+    const otra = await this.repo.buscarActivaConClave(tx, clave, excluirSec);
+    if (otra !== undefined) {
+      throw DominioException.cuentaTractaDuplicada(clave, otra);
+    }
+  }
+
+  private async leer(
+    tx: TransaccionOracle,
+    sec: number,
+  ): Promise<CuentaTractaItemDto> {
+    const fila = await this.repo.obtener(tx, sec);
+    if (!fila) throw DominioException.cuentaTractaNoEncontrada(sec);
+    return mapearFilaOracle(fila);
   }
 }
