@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type, plainToInstance } from 'class-transformer';
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
   IsIn,
@@ -9,6 +10,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  MaxLength,
   Min,
   ValidateIf,
   ValidateNested,
@@ -69,6 +71,54 @@ export class LineaAjusteDto {
   @IsString()
   destinoObservacion?: string;
 }
+
+/**
+ * Retool no puede mandar una lista anidada dentro de un campo del cuerpo sin
+ * desordenar los demás campos —los valores terminan corridos una posición—, así
+ * que viaja como texto JSON. Mismo criterio que los permisos de un perfil: se
+ * parsea antes de validar, y si viene mal formado se deja pasar como está para
+ * que el validador devuelva un error claro en vez de reventar.
+ */
+const textoComoLista = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') return value;
+  const limpio = value.trim();
+  if (limpio === '') return [];
+  try {
+    const datos: unknown = JSON.parse(limpio);
+    return Array.isArray(datos) ? datos : value;
+  } catch {
+    return value;
+  }
+};
+
+/** Un respaldo ya subido por /documentos. */
+export class DocumentoAdjuntoDto {
+  @ApiProperty({ example: 'Boleta_Combustible.pdf' })
+  @IsString()
+  @MaxLength(255)
+  nombre: string;
+
+  @ApiProperty({ example: '/documentos/archivos/3f2b7c1a-9d4e-4b8a-9c2f-1a2b3c4d5e6f.pdf' })
+  @IsString()
+  @MaxLength(512)
+  url: string;
+
+  @ApiPropertyOptional({ example: '180.2' })
+  @IsOptional()
+  @IsString()
+  pesoKb?: string;
+}
+
+/**
+ * Con @Transform presente, class-transformer ya no aplica @Type: los
+ * elementos llegarían como objetos planos y el validador rechazaría cada
+ * propiedad ("property nombre should not exist"). Por eso las instancias se
+ * construyen aquí mismo.
+ */
+const textoComoAdjuntos = ({ value }: { value: unknown }) => {
+  const datos = textoComoLista({ value });
+  return Array.isArray(datos) ? plainToInstance(DocumentoAdjuntoDto, datos) : datos;
+};
 
 export class CrearSolicitudDto {
   @ApiProperty({ example: 'Marcelo Silva' })
@@ -146,6 +196,19 @@ export class CrearSolicitudDto {
   @IsString()
   @IsNotEmpty()
   beneficiarioRut?: string;
+
+  @ApiPropertyOptional({
+    type: [DocumentoAdjuntoDto],
+    description:
+      'Respaldos de la solicitud. Reemplaza a documentoNombre/documentoGcsUri/documentoPesoKb, ' +
+      'que se conservan solo por compatibilidad con la versión anterior del portal.',
+  })
+  @Transform(textoComoAdjuntos)
+  @IsOptional()
+  @ValidateNested({ each: true })
+  @Type(() => DocumentoAdjuntoDto)
+  @ArrayMaxSize(5)
+  documentos?: DocumentoAdjuntoDto[];
 
   @ApiPropertyOptional({ example: 'Boleta_Combustible.pdf' })
   @IsOptional()

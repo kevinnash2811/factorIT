@@ -112,6 +112,15 @@ export class DominioException extends HttpException {
     );
   }
 
+  static perfilNoEncontrado(perfilId: number): DominioException {
+    return new DominioException(
+      'NO_ENCONTRADO',
+      'Perfil de permisos no encontrado',
+      `No existe un perfil de permisos con id ${perfilId}. Actualiza la pantalla: es posible que lo hayan eliminado.`,
+      HttpStatus.NOT_FOUND,
+    );
+  }
+
   static solicitudNoEncontrada(id: string): DominioException {
     return new DominioException(
       'NO_ENCONTRADO',

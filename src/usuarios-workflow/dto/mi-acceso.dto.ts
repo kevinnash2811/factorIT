@@ -21,9 +21,49 @@ export class MiAccesoDto {
 
   @ApiProperty({
     description:
-      'Si es false, no hay restricciones aplicadas: la persona no tiene ficha o no tiene perfil.',
+      'Si es false, la persona accede a todo: solo ocurre con un administrador.',
   })
   restringido: boolean;
+
+  @ApiProperty({
+    description:
+      'ADMINISTRADOR: acceso total sin perfil. CON_PERFIL: acceso según su perfil. ' +
+      'SIN_PERFIL: tiene ficha pero ningún perfil asignado. SIN_FICHA: no está dado de alta ' +
+      'en el Workflow. DESHABILITADO: tiene ficha, pero dada de baja — no accede a nada, ' +
+      'aunque sea administrador.',
+    enum: [
+      'ADMINISTRADOR',
+      'CON_PERFIL',
+      'SIN_PERFIL',
+      'SIN_FICHA',
+      'DESHABILITADO',
+    ],
+  })
+  estadoAcceso: string;
+
+  @ApiProperty({
+    description: 'Si es false, el portal muestra la pantalla de bloqueo.',
+  })
+  puedeEntrar: boolean;
+
+  @ApiProperty({
+    description:
+      'Por clave de sección: si la entrada aparece en el menú, aunque esté bloqueada. ' +
+      'Un colaborador sin perfil las ve todas para saber qué acceso pedir; `secciones` dice cuáles puede abrir.',
+    example: { bandeja: true, reportes: true },
+  })
+  menu: Record<string, boolean>;
+
+  @ApiProperty({
+    description: 'Título de la pantalla de bloqueo. Vacío si puede entrar.',
+  })
+  tituloBloqueo: string;
+
+  @ApiProperty({
+    description:
+      'Qué debe hacer la persona para obtener acceso. Vacío si puede entrar.',
+  })
+  mensajeBloqueo: string;
 
   @ApiProperty({
     description: 'Por clave de sección: si la entrada del menú se muestra.',

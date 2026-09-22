@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { RutaPagoEntity } from './entities/ruta-pago.entity';
 import { CentroCostoEntity } from './entities/centro-costo.entity';
 import { SolicitudGastoEntity } from './entities/solicitud-gasto.entity';
+import { SolicitudDocumentoEntity } from './entities/solicitud-documento.entity';
 import { BitacoraAuditoriaEntity } from './entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from './entities/linea-ajuste-contable.entity';
 import { PreferenciaUsuarioEntity } from './entities/preferencia-usuario.entity';
@@ -29,6 +30,8 @@ import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
           RutaPagoEntity,
           CentroCostoEntity,
           SolicitudGastoEntity,
+      SolicitudDocumentoEntity,
+          SolicitudDocumentoEntity,
           BitacoraAuditoriaEntity,
           LineaAjusteContableEntity,
           PreferenciaUsuarioEntity,
@@ -44,6 +47,7 @@ import { PerfilPermisoEntity } from './entities/perfil-permiso.entity';
       RutaPagoEntity,
       CentroCostoEntity,
       SolicitudGastoEntity,
+      SolicitudDocumentoEntity,
       BitacoraAuditoriaEntity,
       LineaAjusteContableEntity,
           PreferenciaUsuarioEntity,

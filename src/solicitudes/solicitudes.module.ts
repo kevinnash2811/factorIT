@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { SolicitudesController } from './solicitudes.controller';
 import { SolicitudesService } from './solicitudes.service';
 import { SolicitudGastoEntity } from '../database/entities/solicitud-gasto.entity';
+import { SolicitudDocumentoEntity } from '../database/entities/solicitud-documento.entity';
 import { RutaPagoEntity } from '../database/entities/ruta-pago.entity';
 import { BitacoraAuditoriaEntity } from '../database/entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from '../database/entities/linea-ajuste-contable.entity';
@@ -11,6 +12,7 @@ import { LineaAjusteContableEntity } from '../database/entities/linea-ajuste-con
   imports: [
     TypeOrmModule.forFeature([
       SolicitudGastoEntity,
+      SolicitudDocumentoEntity,
       RutaPagoEntity,
       BitacoraAuditoriaEntity,
       LineaAjusteContableEntity,

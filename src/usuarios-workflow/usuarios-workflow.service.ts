@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { DominioException } from '../common/dominio.exception';
 import { In, Repository } from 'typeorm';
 import { UsuarioWorkflowEntity } from '../database/entities/usuario-workflow.entity';
 import { PerfilPermisoEntity } from '../database/entities/perfil-permiso.entity';
 import {
+  AsignarPerfilMasivoDto,
   GuardarUsuarioWorkflowDto,
+  OmitidoAsignacionDto,
+  ResultadoAsignacionMasivaDto,
   UsuarioWorkflowDto,
 } from './dto/usuario-workflow.dto';
 import { MiAccesoDto } from './dto/mi-acceso.dto';
@@ -115,63 +119,213 @@ export class UsuariosWorkflowService {
   }
 
   /**
+   * Asigna el mismo perfil a varias personas de una vez.
+   *
+   * La elegibilidad se valida acá y no solo en la pantalla: un administrador no
+   * necesita perfil y una ficha deshabilitada no debería recibir accesos. Cada
+   * omisión vuelve con su motivo, para que quien la ejecutó vea qué quedó fuera
+   * en vez de suponer que se aplicó a todos.
+   *
+   * "Activo en Retool" no se puede comprobar desde acá — este servicio no
+   * conoce la Retool API —, así que ese filtro vive en el front.
+   */
+  async asignarPerfilAVarios(
+    dto: AsignarPerfilMasivoDto,
+  ): Promise<ResultadoAsignacionMasivaDto> {
+    const perfilId = dto.perfilId ?? null;
+    let perfilNombre: string | null = null;
+
+    if (perfilId !== null) {
+      const perfil = await this.perfilesRepo.findOneBy({ perfilId });
+      if (!perfil) throw DominioException.perfilNoEncontrado(perfilId);
+      perfilNombre = perfil.nombre;
+    }
+
+    const fichas = await this.repo.find({
+      where: { retoolUserId: In(dto.usuarios.map((u) => u.retoolUserId)) },
+    });
+    const porId = new Map(fichas.map((f) => [f.retoolUserId, f]));
+
+    const omitidos: OmitidoAsignacionDto[] = [];
+    const porGuardar: UsuarioWorkflowEntity[] = [];
+    const ahora = new Date();
+    let asignados = 0;
+
+    for (const u of dto.usuarios) {
+      const ficha = porId.get(u.retoolUserId);
+      if (!ficha) {
+        omitidos.push({
+          email: u.email,
+          motivo:
+            'No tiene ficha del Workflow: créala antes de asignarle un perfil.',
+        });
+        continue;
+      }
+      if (ficha.tipoUsuario === 'ADMINISTRADOR') {
+        omitidos.push({
+          email: u.email,
+          motivo: 'Es administrador: ya accede a todo el sistema.',
+        });
+        continue;
+      }
+      if (!ficha.habilitado) {
+        omitidos.push({
+          email: u.email,
+          motivo: 'Su ficha está deshabilitada: habilítala primero.',
+        });
+        continue;
+      }
+      // Quien ya tenía el perfil cuenta como asignado, pero no se vuelve a guardar.
+      asignados++;
+      if (ficha.perfilId === perfilId) continue;
+      ficha.perfilId = perfilId;
+      ficha.actualizadoEn = ahora;
+      porGuardar.push(ficha);
+    }
+
+    if (porGuardar.length > 0) await this.repo.save(porGuardar);
+
+    return { asignados, omitidos, perfilNombre };
+  }
+
+  /**
    * Resuelve qué puede ver y hacer una persona. Es la única fuente que el
    * front consulta para ocultar menús y deshabilitar botones.
    *
-   * Regla deliberada: **sin ficha o sin perfil no hay restricciones**. El
-   * sistema está en construcción y 44 de 46 usuarios todavía no tienen ficha;
-   * si "sin configurar" significara "sin acceso", el portal quedaría
-   * inutilizable de golpe. Las restricciones se activan cuando alguien
-   * asigna un perfil, que es un acto explícito.
+   * Regla: **se deniega por defecto**. Sin ficha en el Workflow no se entra al
+   * portal, y un colaborador sin perfil no puede abrir ninguna sección. La
+   * única excepción es el administrador: accede a todo y no necesita perfil.
    *
-   * `PENDIENTE`: antes de producción hay que invertir este criterio a
-   * "denegar por defecto" y configurar a todos previamente.
+   * `menu` y `secciones` son distintos a propósito. Al colaborador sin perfil
+   * se le muestran las entradas del menú bloqueadas, para que vea qué existe y
+   * sepa qué pedir; un portal vacío parecería roto. `secciones` es lo que
+   * realmente puede abrir.
+   *
+   * Ojo: esto decide lo que se ve, no lo que se puede hacer. Mientras los
+   * endpoints no validen el permiso por su cuenta, sigue siendo una barrera de
+   * interfaz.
    */
   async miAcceso(clave: string): Promise<MiAccesoDto> {
     const fila = await this.repo.findOne({
       where: [{ retoolUserId: clave }, { email: clave }],
     });
 
-    const todo = (valor: boolean) => {
-      const secciones: Record<string, boolean> = {};
-      const permisos: Record<string, Record<string, string | boolean>> = {};
-      for (const s of SECCIONES_PORTAL) {
-        secciones[s.clave] = valor;
-        permisos[s.clave] = {};
-        for (const a of s.acciones) {
-          permisos[s.clave][a.clave] = a.tipo === 'booleano' ? valor : 'TODAS';
-        }
-      }
-      return { secciones, permisos };
+    const TITULO_SIN_FICHA = 'No tienes acceso al Portal de Gestión Contable';
+    const MENSAJE_SIN_FICHA =
+      'Tu cuenta no está autorizada para ingresar al sistema de Gestión Contable. ' +
+      'Solicita la autorización al administrador del sistema para que te asignen ' +
+      'un tipo de cuenta y un perfil de permisos.';
+    const TITULO_DESHABILITADO = 'Tu acceso está dado de baja';
+    const MENSAJE_DESHABILITADO =
+      'Tu ficha del Workflow existe, pero está deshabilitada, así que no tienes ' +
+      'acceso al sistema de Gestión Contable. Solicita al administrador del ' +
+      'sistema que la vuelva a habilitar.';
+    const TITULO_SIN_PERFIL = 'Todavía no tienes permisos asignados';
+    const MENSAJE_SIN_PERFIL =
+      'Tu cuenta está dada de alta, pero aún no tiene un perfil de permisos, así ' +
+      'que no puedes abrir ninguna sección. En el menú puedes ver las secciones ' +
+      'del sistema, bloqueadas: solicita al administrador del sistema de Gestión ' +
+      'Contable el perfil que necesitas.';
+
+    /** El mismo valor para todas las secciones del catálogo. */
+    const mapa = (valor: boolean) => {
+      const m: Record<string, boolean> = {};
+      for (const s of SECCIONES_PORTAL) m[s.clave] = valor;
+      return m;
     };
 
-    const sinFicha = !fila;
-    const esAdmin = fila?.tipoUsuario === 'ADMINISTRADOR';
+    const permisosDe = (valor: boolean) => {
+      const permisos: Record<string, Record<string, string | boolean>> = {};
+      for (const s of SECCIONES_PORTAL) {
+        permisos[s.clave] = {};
+        for (const a of s.acciones) {
+          permisos[s.clave][a.clave] =
+            a.tipo === 'booleano' ? valor : valor ? 'TODAS' : 'NINGUNA';
+        }
+      }
+      return permisos;
+    };
 
-    if (sinFicha || esAdmin || !fila.perfilId) {
-      const acceso = todo(true);
+    // Sin ficha no hay nada que mostrar: ni secciones ni menú.
+    if (!fila) {
       return {
-        usuario: fila?.email ?? clave,
-        tipoUsuario: fila?.tipoUsuario ?? 'SIN_FICHA',
-        esAdministrador: esAdmin,
+        usuario: clave,
+        tipoUsuario: 'SIN_FICHA',
+        esAdministrador: false,
         perfilNombre: null,
-        restringido: false,
-        ...acceso,
-        mensajeSinPermiso: '',
+        restringido: true,
+        estadoAcceso: 'SIN_FICHA',
+        puedeEntrar: false,
+        menu: mapa(false),
+        secciones: mapa(false),
+        permisos: permisosDe(false),
+        tituloBloqueo: TITULO_SIN_FICHA,
+        mensajeBloqueo: MENSAJE_SIN_FICHA,
+        mensajeSinPermiso: MENSAJE_SIN_FICHA,
       };
     }
 
-    const perfil = await this.perfilesRepo.findOneBy({ perfilId: fila.perfilId });
-    if (!perfil) {
-      const acceso = todo(true);
+    // Ficha dada de baja: el registro se conserva, pero no da acceso a nada.
+    // Se comprueba antes que el tipo de cuenta, así la baja también corta el
+    // acceso de un administrador.
+    if (!fila.habilitado) {
       return {
         usuario: fila.email,
         tipoUsuario: fila.tipoUsuario,
         esAdministrador: false,
         perfilNombre: null,
+        restringido: true,
+        estadoAcceso: 'DESHABILITADO',
+        puedeEntrar: false,
+        menu: mapa(false),
+        secciones: mapa(false),
+        permisos: permisosDe(false),
+        tituloBloqueo: TITULO_DESHABILITADO,
+        mensajeBloqueo: MENSAJE_DESHABILITADO,
+        mensajeSinPermiso: MENSAJE_DESHABILITADO,
+      };
+    }
+
+    // El administrador accede a todo y no necesita perfil.
+    if (fila.tipoUsuario === 'ADMINISTRADOR') {
+      return {
+        usuario: fila.email,
+        tipoUsuario: fila.tipoUsuario,
+        esAdministrador: true,
+        perfilNombre: null,
         restringido: false,
-        ...acceso,
+        estadoAcceso: 'ADMINISTRADOR',
+        puedeEntrar: true,
+        menu: mapa(true),
+        secciones: mapa(true),
+        permisos: permisosDe(true),
+        tituloBloqueo: '',
+        mensajeBloqueo: '',
         mensajeSinPermiso: '',
+      };
+    }
+
+    const perfil = fila.perfilId
+      ? await this.perfilesRepo.findOneBy({ perfilId: fila.perfilId })
+      : null;
+
+    // Colaborador con ficha pero sin perfil, o con uno que ya no existe: ve el
+    // menú completo y bloqueado, para saber qué acceso pedir.
+    if (!perfil) {
+      return {
+        usuario: fila.email,
+        tipoUsuario: fila.tipoUsuario,
+        esAdministrador: false,
+        perfilNombre: null,
+        restringido: true,
+        estadoAcceso: 'SIN_PERFIL',
+        puedeEntrar: false,
+        menu: mapa(true),
+        secciones: mapa(false),
+        permisos: permisosDe(false),
+        tituloBloqueo: TITULO_SIN_PERFIL,
+        mensajeBloqueo: MENSAJE_SIN_PERFIL,
+        mensajeSinPermiso: MENSAJE_SIN_PERFIL,
       };
     }
 
@@ -195,14 +349,26 @@ export class UsuariosWorkflowService {
       }
     }
 
+    // Un perfil sin ninguna sección deja a la persona fuera igual que si no
+    // tuviera perfil: se le avisa en vez de mostrarle un portal vacío.
+    const algunaSeccion = Object.values(secciones).some(Boolean);
+
     return {
       usuario: fila.email,
       tipoUsuario: fila.tipoUsuario,
       esAdministrador: false,
       perfilNombre: perfil.nombre,
       restringido: true,
+      estadoAcceso: 'CON_PERFIL',
+      puedeEntrar: algunaSeccion,
+      menu: { ...secciones },
       secciones,
       permisos,
+      tituloBloqueo: algunaSeccion ? '' : TITULO_SIN_PERFIL,
+      mensajeBloqueo: algunaSeccion
+        ? ''
+        : `Tu perfil "${perfil.nombre}" no tiene ninguna sección habilitada. ` +
+          'Solicita al administrador del sistema de Gestión Contable el acceso que necesitas.',
       mensajeSinPermiso:
         `Tu perfil "${perfil.nombre}" no incluye esta acción. ` +
         'Solicítala al administrador del sistema.',

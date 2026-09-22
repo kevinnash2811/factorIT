@@ -1,8 +1,34 @@
-import { Body, Controller, Get, Header, Headers, Param, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Header,
+  Headers,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Res,
+  StreamableFile,
+} from '@nestjs/common';
 import type { Response } from 'express';
-import { ApiCreatedResponse, ApiHeader, ApiOkResponse, ApiOperation, ApiParam, ApiProduces, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiCreatedResponse,
+  ApiHeader,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { SolicitudesService } from './solicitudes.service';
 import { ListarSolicitudesQueryDto } from './dto/listar-solicitudes-query.dto';
+import {
+  esFormatoValido,
+  extensionDe,
+  tipoDeContenido,
+} from './exportacion.util';
 import { CrearSolicitudDto } from './dto/crear-solicitud.dto';
 import { SolicitudesPaginadasDto } from './dto/solicitud-list-item.dto';
 import { BitacoraSolicitudDto } from './dto/bitacora-solicitud.dto';
@@ -30,23 +56,43 @@ export class SolicitudesController {
 
   @Get('exportar')
   @ApiOperation({
-    summary: 'Exportar solicitudes a Excel',
+    summary: 'Exportar solicitudes a Excel o CSV',
     description:
-      'Genera un .xlsx con TODAS las solicitudes que cumplen los mismos filtros de la Bandeja ' +
+      'Genera el archivo con TODAS las solicitudes que cumplen los mismos filtros de la Bandeja ' +
       '(hasta un tope de 10.000 filas), no solo la página visible. Enmascara confidenciales igual ' +
-      'que el listado — el archivo nunca expone más de lo que el usuario ve en pantalla.',
+      'que el listado — el archivo nunca expone más de lo que el usuario ve en pantalla. ' +
+      'El formato "csv" sale con punto y coma y BOM para que Excel respete columnas y tildes; ' +
+      '"csv-coma" usa coma, para procesarlo con otras herramientas.',
   })
-  @ApiProduces('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  async exportar(@Query() query: ListarSolicitudesQueryDto, @Res({ passthrough: true }) res: Response) {
+  @ApiQuery({
+    name: 'formato',
+    required: false,
+    enum: ['xlsx', 'csv', 'csv-coma'],
+    description: 'Por defecto xlsx.',
+  })
+  async exportar(
+    @Query() query: ListarSolicitudesQueryDto,
+    @Query('formato') formato: string | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const elegido = esFormatoValido(formato) ? formato : 'xlsx';
+
     // TODO: reemplazar `false` por el permiso real del usuario autenticado (Keycloak)
-    const buffer = await this.service.exportar(query, false);
+    const buffer =
+      elegido === 'xlsx'
+        ? await this.service.exportar(query, false)
+        : await this.service.exportarCsv(query, false, elegido);
 
     const ahora = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
-    const nombreArchivo = `Solicitudes_${ahora.getFullYear()}-${pad(ahora.getMonth() + 1)}-${pad(ahora.getDate())}_${pad(ahora.getHours())}-${pad(ahora.getMinutes())}.xlsx`;
+    const nombreArchivo =
+      `Solicitudes_${ahora.getFullYear()}-${pad(ahora.getMonth() + 1)}-${pad(ahora.getDate())}` +
+      `_${pad(ahora.getHours())}-${pad(ahora.getMinutes())}.${extensionDe(elegido)}`;
 
-    res.set({ 'Content-Disposition': `attachment; filename="${nombreArchivo}"` });
+    res.set({
+      'Content-Type': tipoDeContenido(elegido),
+      'Content-Disposition': `attachment; filename="${nombreArchivo}"`,
+    });
     return new StreamableFile(buffer);
   }
 
