@@ -3,7 +3,9 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
 import { randomUUID } from 'crypto';
 import ExcelJS from 'exceljs';
+import { aCsv, FormatoExportacion, opcionesDe } from './exportacion.util';
 import { SolicitudGastoEntity } from '../database/entities/solicitud-gasto.entity';
+import { SolicitudDocumentoEntity } from '../database/entities/solicitud-documento.entity';
 import { RutaPagoEntity } from '../database/entities/ruta-pago.entity';
 import { BitacoraAuditoriaEntity } from '../database/entities/bitacora-auditoria.entity';
 import { LineaAjusteContableEntity } from '../database/entities/linea-ajuste-contable.entity';
@@ -19,11 +21,34 @@ import { resolverAcciones, resolverEstado } from '../common/estado-solicitud.uti
 import { enmascararSiConfidencial } from '../common/confidencialidad.util';
 import { DominioException } from '../common/dominio.exception';
 
+/**
+ * Respaldos que trae la solicitud, vengan como lista (formato actual) o en los
+ * tres campos sueltos de la versión anterior del portal. Así una app que aún no
+ * se actualiza sigue guardando su adjunto.
+ */
+export function documentosDe(
+  dto: CrearSolicitudDto,
+): { nombre: string; url: string; pesoKb?: string }[] {
+  if (dto.documentos?.length) return dto.documentos;
+  if (dto.documentoNombre) {
+    return [
+      {
+        nombre: dto.documentoNombre,
+        url: dto.documentoGcsUri ?? '',
+        pesoKb: dto.documentoPesoKb,
+      },
+    ];
+  }
+  return [];
+}
+
 @Injectable()
 export class SolicitudesService {
   constructor(
     @InjectRepository(SolicitudGastoEntity)
     private readonly solicitudRepo: Repository<SolicitudGastoEntity>,
+    @InjectRepository(SolicitudDocumentoEntity)
+    private readonly documentoRepo: Repository<SolicitudDocumentoEntity>,
     @InjectRepository(RutaPagoEntity)
     private readonly rutaRepo: Repository<RutaPagoEntity>,
     @InjectRepository(BitacoraAuditoriaEntity)
@@ -167,16 +192,10 @@ export class SolicitudesService {
    * ya trae el texto o número final tal como lo vería el usuario en Retool.
    */
   async exportar(query: ListarSolicitudesQueryDto, puedeVerConfidenciales = false): Promise<Buffer> {
-    const TOPE_FILAS = 10_000;
-
-    const qb = this.solicitudRepo
-      .createQueryBuilder('s')
-      .innerJoinAndSelect('s.ruta', 'ruta')
-      .orderBy('s.creadoEn', 'DESC')
-      .take(TOPE_FILAS);
-    this.aplicarFiltros(qb, query);
-
-    const rows = await qb.getMany();
+    const { encabezados, filas } = await this.filasParaExportar(
+      query,
+      puedeVerConfidenciales,
+    );
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'Portal de Gestión Contable — CLA';
@@ -203,35 +222,110 @@ export class SolicitudesService {
     filaEncabezado.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE5E7EB' } };
     filaEncabezado.alignment = { vertical: 'middle' };
 
-    for (const r of rows) {
-      const confidencial = r.ruta.confidencial;
+    for (const valores of filas) {
+      const fila = hoja.addRow({
+        id: valores[0],
+        colaborador: valores[1],
+        fecha: valores[9],
+        monto: valores[3],
+        sociedad: valores[4],
+        ruta: valores[5],
+        estado: valores[6],
+        sla: valores[7],
+        factura: valores[8],
+      });
+      fila.getCell('fecha').numFmt = 'dd/mm/yyyy hh:mm';
+      if (typeof valores[3] === 'number') fila.getCell('monto').numFmt = '#,##0';
+    }
+
+    hoja.autoFilter = { from: 'A1', to: 'I1' };
+    void encabezados;
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
+  }
+
+  /**
+   * Mismos datos y mismo orden de columnas que el Excel, en texto plano.
+   *
+   * Se reutiliza `filasParaExportar` a propósito: si las dos salidas armaran
+   * la lista por separado, tarde o temprano una mostraría una columna que la
+   * otra no, y nadie lo notaría hasta que alguien comparara dos archivos.
+   */
+  async exportarCsv(
+    query: ListarSolicitudesQueryDto,
+    puedeVerConfidenciales: boolean,
+    formato: FormatoExportacion,
+  ): Promise<Buffer> {
+    const { encabezados, filas } = await this.filasParaExportar(
+      query,
+      puedeVerConfidenciales,
+    );
+    // La fecha va como texto ya formateado: así Excel no la reinterpreta.
+    const paraTexto = filas.map((f) => f.slice(0, 9));
+    return Buffer.from(aCsv(encabezados, paraTexto, opcionesDe(formato)), 'utf8');
+  }
+
+  /**
+   * Filas de la exportación, ya enmascaradas y con las etiquetas resueltas.
+   * La última posición lleva la fecha como Date, que solo usa el Excel.
+   */
+  private async filasParaExportar(
+    query: ListarSolicitudesQueryDto,
+    puedeVerConfidenciales: boolean,
+  ): Promise<{ encabezados: string[]; filas: unknown[][] }> {
+    const TOPE_FILAS = 10_000;
+
+    const qb = this.solicitudRepo
+      .createQueryBuilder('s')
+      .innerJoinAndSelect('s.ruta', 'ruta')
+      .orderBy('s.creadoEn', 'DESC')
+      .take(TOPE_FILAS);
+    this.aplicarFiltros(qb, query);
+
+    const rows = await qb.getMany();
+
+    const dosDigitos = (n: number) => String(n).padStart(2, '0');
+    const comoTexto = (f: Date) =>
+      `${dosDigitos(f.getDate())}/${dosDigitos(f.getMonth() + 1)}/${f.getFullYear()} ` +
+      `${dosDigitos(f.getHours())}:${dosDigitos(f.getMinutes())}`;
+
+    const filas = rows.map((r) => {
       const base = enmascararSiConfidencial(
         { solicitante: r.solicitante, monto: Number(r.montoClp) },
-        confidencial,
+        r.ruta.confidencial,
         puedeVerConfidenciales,
       );
       const estado = resolverEstado(r.estadoSolicitud);
       const sla = resolverSla(r.estadoSolicitud, r.fechaLimiteSla);
+      return [
+        r.solicitudId,
+        base.solicitante,
+        comoTexto(r.creadoEn),
+        base.monto ?? '########',
+        `Soc. ${r.ruta.sociedadSap}`,
+        r.ruta.nombreRuta,
+        estado.etiqueta,
+        sla.etiqueta,
+        r.numeroFactura ?? '',
+        r.creadoEn,
+      ];
+    });
 
-      const fila = hoja.addRow({
-        id: r.solicitudId,
-        colaborador: base.solicitante,
-        fecha: r.creadoEn,
-        monto: base.monto ?? '########',
-        sociedad: `Soc. ${r.ruta.sociedadSap}`,
-        ruta: r.ruta.nombreRuta,
-        estado: estado.etiqueta,
-        sla: sla.etiqueta,
-        factura: r.numeroFactura ?? '',
-      });
-      fila.getCell('fecha').numFmt = 'dd/mm/yyyy hh:mm';
-      if (typeof base.monto === 'number') fila.getCell('monto').numFmt = '#,##0';
-    }
-
-    hoja.autoFilter = { from: 'A1', to: 'I1' };
-
-    const buffer = await workbook.xlsx.writeBuffer();
-    return Buffer.from(buffer);
+    return {
+      encabezados: [
+        'ID',
+        'Colaborador',
+        'Fecha Creación',
+        'Monto (CLP)',
+        'Sociedad',
+        'Ruta Contable',
+        'Estado',
+        'Control SLA',
+        'N° Factura',
+      ],
+      filas,
+    };
   }
 
   /**
@@ -299,6 +393,24 @@ export class SolicitudesService {
       } as Partial<SolicitudGastoEntity>);
 
       await manager.insert(SolicitudGastoEntity, solicitud);
+
+      // Los respaldos van en su propia tabla: una solicitud puede traer la
+      // factura, su boleta y el comprobante de pago.
+      const adjuntos = documentosDe(dto);
+      if (adjuntos.length > 0) {
+        await manager.insert(
+          SolicitudDocumentoEntity,
+          adjuntos.map((a) =>
+            manager.create(SolicitudDocumentoEntity, {
+              solicitudId,
+              nombre: a.nombre,
+              url: a.url,
+              pesoKb: a.pesoKb ?? null,
+              creadoEn: new Date(),
+            } as Partial<SolicitudDocumentoEntity>),
+          ),
+        );
+      }
 
       if (dto.esAjusteContable && dto.lineasAjuste?.length) {
         const lineas = dto.lineasAjuste.map((l) =>
@@ -483,6 +595,14 @@ export class SolicitudesService {
     );
     const ocultar = confidencial && !puedeVerConfidenciales;
 
+    // Respaldos de la solicitud, en el orden en que se subieron.
+    const respaldos = (
+      await this.documentoRepo.find({
+        where: { solicitudId },
+        order: { documentoId: 'ASC' },
+      })
+    ).map((a) => ({ nombre: a.nombre, url: a.url, pesoKb: a.pesoKb ?? '' }));
+
     return {
       id: solicitud.solicitudId,
       estado: resolverEstado(solicitud.estadoSolicitud),
@@ -514,13 +634,9 @@ export class SolicitudesService {
         cecoId: solicitud.cecoId,
       },
       descripcion: solicitud.descripcionDetalle,
-      documento: solicitud.documentoNombre
-        ? {
-            nombre: solicitud.documentoNombre,
-            url: solicitud.documentoGcsUri ?? '',
-            pesoKb: solicitud.documentoPesoKb ?? '',
-          }
-        : null,
+      // `documento` se mantiene por compatibilidad: es el primero de la lista.
+      documento: respaldos[0] ?? null,
+      documentos: respaldos,
       confidencial,
       historial: pasos.map((p) => ({
         pasoNumero: p.pasoNumero,
@@ -547,16 +663,20 @@ export class SolicitudesService {
       order: { pasoNumero: 'ASC' },
     });
 
+    // Respaldos de la solicitud, en el orden en que se subieron.
+    const respaldos = (
+      await this.documentoRepo.find({
+        where: { solicitudId },
+        order: { documentoId: 'ASC' },
+      })
+    ).map((a) => ({ nombre: a.nombre, url: a.url, pesoKb: a.pesoKb ?? '' }));
+
     return {
       solicitudId,
       cargoSolicitante: `${solicitud.solicitanteCargo} (${solicitud.solicitanteGerencia})`,
-      documento: solicitud.documentoNombre
-        ? {
-            nombre: solicitud.documentoNombre,
-            url: solicitud.documentoGcsUri ?? '',
-            pesoKb: solicitud.documentoPesoKb ?? '',
-          }
-        : null,
+      // `documento` se mantiene por compatibilidad: es el primero de la lista.
+      documento: respaldos[0] ?? null,
+      documentos: respaldos,
       pasos: pasos.map((p) => ({
         pasoNumero: p.pasoNumero,
         responsable: p.responsable,

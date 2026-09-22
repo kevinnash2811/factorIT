@@ -65,7 +65,11 @@ class SlaDto {
   @ApiProperty({ example: '#ef4444' })
   color: string;
 
-  @ApiProperty({ example: '2026-07-26T10:30:00-04:00', nullable: true })
+  @ApiProperty({
+    example: '2026-07-26T10:30:00-04:00',
+    nullable: true,
+    description: 'Fecha límite del SLA. Viene informada siempre que el ticket tenga plazo, también en los ya integrados; es null sólo cuando nunca se le calculó uno.',
+  })
   venceEn: string | null;
 }
 

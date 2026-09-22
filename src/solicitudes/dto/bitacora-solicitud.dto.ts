@@ -41,6 +41,12 @@ export class BitacoraSolicitudDto {
   @ApiProperty({ type: DocumentoSoporteDto, nullable: true })
   documento: DocumentoSoporteDto | null;
 
+  @ApiProperty({
+    type: [DocumentoSoporteDto],
+    description: "Todos los respaldos de la solicitud. `documento` es el primero, por compatibilidad.",
+  })
+  documentos: DocumentoSoporteDto[];
+
   @ApiProperty({ type: [PasoBitacoraDto] })
   pasos: PasoBitacoraDto[];
 }

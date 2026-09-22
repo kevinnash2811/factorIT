@@ -1,10 +1,18 @@
 import { Body, Controller, Delete, Get, Param, Put, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UsuariosWorkflowService } from './usuarios-workflow.service';
 import {
+  AsignarPerfilMasivoDto,
   GuardarUsuarioWorkflowDto,
+  ResultadoAsignacionMasivaDto,
   UsuarioWorkflowDto,
 } from './dto/usuario-workflow.dto';
+import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { MiAccesoDto } from './dto/mi-acceso.dto';
 
 @ApiTags('Usuarios Workflow')
@@ -42,8 +50,10 @@ export class UsuariosWorkflowController {
     summary: 'Qué puede ver y hacer una persona',
     description:
       'Combina el tipo de cuenta con el perfil asignado y devuelve el resultado ya resuelto. ' +
-      'Es lo que el front consulta para ocultar entradas del menú y deshabilitar botones. ' +
-      'Un ADMINISTRADOR recibe acceso total; quien no tiene ficha o no tiene perfil no queda restringido.',
+      'Es lo que el front consulta para ocultar entradas del menú, bloquear secciones y ' +
+      'deshabilitar botones. Se deniega por defecto: un ADMINISTRADOR accede a todo sin perfil; ' +
+      'un colaborador sin perfil ve el menú bloqueado; quien no tiene ficha no entra al portal, ' +
+      'y una ficha deshabilitada no da acceso a nada, aunque sea de un administrador.',
   })
   @ApiOkResponse({ type: MiAccesoDto })
   miAcceso(@Param('clave') clave: string) {
@@ -72,6 +82,26 @@ export class UsuariosWorkflowController {
   @ApiOkResponse({ type: UsuarioWorkflowDto })
   guardar(@Body() dto: GuardarUsuarioWorkflowDto) {
     return this.service.guardar(dto);
+  }
+
+  @Put('perfil-masivo')
+  @ApiOperation({
+    summary: 'Asignar un perfil de permisos a varias personas',
+    description:
+      'Aplica el mismo perfil a una lista de usuarios en una sola llamada. Omite a quienes no ' +
+      'corresponde —administradores, fichas deshabilitadas o gente sin ficha— y devuelve el motivo ' +
+      'de cada omisión. Con perfilId nulo, quita el perfil: esas personas dejan de acceder a las ' +
+      'secciones hasta que se les asigne otro. "Activo en Retool" no se valida aquí: este servicio ' +
+      'no conoce la Retool API, ese filtro lo aplica la pantalla.',
+  })
+  @ApiOkResponse({ type: ResultadoAsignacionMasivaDto })
+  @ApiResponse({
+    status: 404,
+    description: 'El perfil indicado no existe',
+    type: ErrorResponseDto,
+  })
+  asignarPerfilAVarios(@Body() dto: AsignarPerfilMasivoDto) {
+    return this.service.asignarPerfilAVarios(dto);
   }
 
   @Delete(':retoolUserId')
