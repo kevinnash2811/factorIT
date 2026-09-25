@@ -1,5 +1,23 @@
-import { Body, Controller, Delete, Get, Param, Put, Query } from '@nestjs/common';
 import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Query,
+  Res,
+  StreamableFile,
+  UploadedFiles,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import type { Response } from 'express';
+import {
+  ApiConsumes,
   ApiOkResponse,
   ApiOperation,
   ApiResponse,
@@ -14,6 +32,14 @@ import {
 } from './dto/usuario-workflow.dto';
 import { ErrorResponseDto } from '../common/dto/error-response.dto';
 import { MiAccesoDto } from './dto/mi-acceso.dto';
+import {
+  ExportarPlanillaDto,
+  ImportarPlanillaDto,
+  ResultadoPlanillaDto,
+} from './dto/planilla-usuarios.dto';
+
+/** Una planilla de fichas no pesa ni un megabyte; 5 deja margen de sobra. */
+const TAMANO_MAXIMO_PLANILLA = 5 * 1024 * 1024;
 
 @ApiTags('Usuarios Workflow')
 @Controller('usuarios-workflow')
@@ -102,6 +128,87 @@ export class UsuariosWorkflowController {
   })
   asignarPerfilAVarios(@Body() dto: AsignarPerfilMasivoDto) {
     return this.service.asignarPerfilAVarios(dto);
+  }
+
+  @Post('planilla')
+  @ApiOperation({
+    summary: 'Descargar la planilla de fichas en Excel',
+    description:
+      'Devuelve un .xlsx con una fila por persona y listas desplegables en las columnas editables. ' +
+      'La lista de personas la manda la pantalla —lo filtrado o lo marcado—, porque este servicio ' +
+      'no conoce la Retool API. El mismo archivo es el que se vuelve a subir para importar.',
+  })
+  async exportarPlanilla(
+    @Body() dto: ExportarPlanillaDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const buffer = await this.service.exportarPlanilla(dto.usuarios);
+
+    const ahora = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const nombreArchivo =
+      `Usuarios_Workflow_${ahora.getFullYear()}-${pad(ahora.getMonth() + 1)}-${pad(ahora.getDate())}` +
+      `_${pad(ahora.getHours())}-${pad(ahora.getMinutes())}.xlsx`;
+
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${nombreArchivo}"`,
+    });
+    return new StreamableFile(buffer);
+  }
+
+  @Post('planilla/importar')
+  @ApiOperation({
+    summary: 'Revisar o aplicar la planilla de fichas',
+    description:
+      'Con aplicar=false (por defecto) no escribe nada: devuelve fila por fila qué pasaría, para ' +
+      'mostrarlo antes de confirmar. Con aplicar=true guarda los cambios en una sola transacción. ' +
+      'Nunca crea usuarios: una fila con alguien que no está en la lista de Retool se informa y se ' +
+      'ignora. Tampoco asciende a nadie a administrador ni deja al sistema sin administradores.',
+  })
+  @ApiConsumes('multipart/form-data')
+  @ApiOkResponse({ type: ResultadoPlanillaDto })
+  @ApiResponse({
+    status: 400,
+    description: 'El archivo no se pudo leer o no tiene las columnas esperadas',
+    type: ErrorResponseDto,
+  })
+  @UseInterceptors(
+    // Se acepta como lista de un elemento, no como archivo único: Retool
+    // manda el campo binario dentro de un arreglo y `single()` lo rechazaría.
+    FilesInterceptor('file', 1, {
+      storage: memoryStorage(),
+      limits: { fileSize: TAMANO_MAXIMO_PLANILLA },
+      fileFilter: (_req, file, callback) => {
+        if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
+          callback(
+            new BadRequestException(
+              'Sube el archivo .xlsx que descargaste desde el botón Exportar.',
+            ),
+            false,
+          );
+          return;
+        }
+        callback(null, true);
+      },
+    }),
+  )
+  importarPlanilla(
+    @UploadedFiles() archivos: Express.Multer.File[] | undefined,
+    @Body() dto: ImportarPlanillaDto,
+  ) {
+    const archivo = (archivos ?? [])[0];
+    if (!archivo) {
+      throw new BadRequestException(
+        'No se recibió ningún archivo (campo esperado: "file").',
+      );
+    }
+    return this.service.importarPlanilla(
+      archivo.buffer,
+      dto.usuarios,
+      dto.aplicar === true,
+    );
   }
 
   @Delete(':retoolUserId')
