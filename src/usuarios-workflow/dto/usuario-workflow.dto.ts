@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type, plainToInstance } from 'class-transformer';
+import { textoComoLista } from '../../common/texto-json.util';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -176,17 +177,6 @@ export class UsuarioWorkflowDto {
  * parsea antes de validar, y si viene mal formado se deja pasar como está para
  * que el validador devuelva un error claro en vez de reventar.
  */
-const textoComoLista = ({ value }: { value: unknown }) => {
-  if (typeof value !== 'string') return value;
-  const limpio = value.trim();
-  if (limpio === '') return [];
-  try {
-    const datos: unknown = JSON.parse(limpio);
-    return Array.isArray(datos) ? datos : value;
-  } catch {
-    return value;
-  }
-};
 
 /** Cada persona a la que se le aplicará el perfil. */
 export class UsuarioParaPerfilDto {

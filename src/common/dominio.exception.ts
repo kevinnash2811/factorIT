@@ -121,6 +121,15 @@ export class DominioException extends HttpException {
     );
   }
 
+  static planillaIlegible(detalle: string): DominioException {
+    return new DominioException(
+      'VALIDACION',
+      'No se pudo leer la planilla',
+      detalle,
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
   static solicitudNoEncontrada(id: string): DominioException {
     return new DominioException(
       'NO_ENCONTRADO',

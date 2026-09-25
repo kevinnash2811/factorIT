@@ -12,16 +12,24 @@ import {
   UsuarioWorkflowDto,
 } from './dto/usuario-workflow.dto';
 import { MiAccesoDto } from './dto/mi-acceso.dto';
+import {
+  ResultadoPlanillaDto,
+  UsuarioRetoolDto,
+} from './dto/planilla-usuarios.dto';
 import { SECCIONES_PORTAL } from '../perfiles-permiso/secciones';
-
-/** Etiquetas legibles. Se resuelven aquí para que el front solo pinte. */
-const ETIQUETAS_NIVEL: Record<string, string> = {
-  ANALISTA: 'Analista',
-  SUPERVISOR: 'Supervisor',
-  SUBGERENCIA: 'Subgerencia',
-  GERENCIA_NEGOCIO: 'Gerencia de Negocio',
-  GERENCIA_GENERAL: 'Gerencia General',
-};
+import { ETIQUETAS_NIVEL, TIPOS_CUENTA, normalizar } from './catalogos-ficha';
+import {
+  FilaExportacion,
+  construirLibro,
+} from './exportacion-usuarios.util';
+import {
+  ContextoEvaluacion,
+  FilaEvaluada,
+  evaluarFila,
+  leerPlanilla,
+  marcarRepetidas,
+  protegerAdministradores,
+} from './importacion-usuarios.util';
 
 const COLORES_TIPO: Record<string, string> = {
   ADMINISTRADOR: '#8b5cf6',
@@ -379,6 +387,166 @@ export class UsuariosWorkflowService {
   async eliminar(retoolUserId: string): Promise<{ eliminado: boolean }> {
     const res = await this.repo.delete({ retoolUserId });
     return { eliminado: (res.affected ?? 0) > 0 };
+  }
+
+  /**
+   * Arma la planilla de fichas para las personas que indique el front.
+   *
+   * La lista de personas llega desde Retool y no se consulta aquí: el token de
+   * la Retool API vive allá. Eso además deja que la pantalla exporte
+   * exactamente lo que el usuario está viendo — lo filtrado o lo marcado — sin
+   * que este servicio tenga que replicar esos filtros.
+   */
+  async exportarPlanilla(usuarios: UsuarioRetoolDto[]): Promise<Buffer> {
+    const [fichas, perfiles] = await Promise.all([
+      this.repo.find(),
+      this.perfilesRepo.find({ order: { nombre: 'ASC' } }),
+    ]);
+    const porId = new Map(fichas.map((f) => [f.retoolUserId, f]));
+    const nombrePorPerfil = new Map(perfiles.map((p) => [p.perfilId, p.nombre]));
+
+    const filas: FilaExportacion[] = usuarios.map((u) => {
+      const f = porId.get(u.retoolUserId);
+      return {
+        retoolUserId: u.retoolUserId,
+        nombre: u.nombre ?? '',
+        email: u.email,
+        activoRetool: u.activoRetool ?? true,
+        configurado: !!f,
+        rut: f?.rut ?? null,
+        nivelEtiqueta: f?.nivelJerarquico
+          ? (ETIQUETAS_NIVEL[f.nivelJerarquico] ?? f.nivelJerarquico)
+          : null,
+        plazoSlaHoras: f?.plazoSlaHoras ?? null,
+        tipoEtiqueta: f
+          ? (TIPOS_CUENTA.find((t) => t.codigo === f.tipoUsuario)?.etiqueta ??
+            f.tipoUsuario)
+          : null,
+        perfilNombre: f?.perfilId ? (nombrePorPerfil.get(f.perfilId) ?? null) : null,
+        habilitado: f ? f.habilitado : null,
+        icono: f?.icono ?? null,
+        observaciones: f?.observaciones ?? null,
+      };
+    });
+
+    const libro = construirLibro(
+      filas,
+      perfiles.map((p) => p.nombre),
+    );
+    return Buffer.from(await libro.xlsx.writeBuffer());
+  }
+
+  /**
+   * Evalúa la planilla y, solo si `aplicar` es true, la escribe.
+   *
+   * Los dos modos recorren el mismo código: la vista previa que confirma el
+   * usuario es literalmente el resultado de la misma evaluación que después se
+   * guarda, así que no puede prometer una cosa y hacer otra.
+   */
+  async importarPlanilla(
+    archivo: Buffer,
+    usuarios: UsuarioRetoolDto[],
+    aplicar: boolean,
+  ): Promise<ResultadoPlanillaDto> {
+    const { filas: crudas, error } = await leerPlanilla(archivo);
+    if (error) throw DominioException.planillaIlegible(error);
+
+    const [fichas, perfiles] = await Promise.all([
+      this.repo.find(),
+      this.perfilesRepo.find({ order: { nombre: 'ASC' } }),
+    ]);
+
+    const deRetool = (u: UsuarioRetoolDto) => ({
+      retoolUserId: u.retoolUserId,
+      email: u.email,
+      nombre: u.nombre ?? u.email,
+    });
+    const contexto: ContextoEvaluacion = {
+      porId: new Map(usuarios.map((u) => [u.retoolUserId, deRetool(u)])),
+      porEmail: new Map(usuarios.map((u) => [normalizar(u.email), deRetool(u)])),
+      fichas: new Map(fichas.map((f) => [f.retoolUserId, f])),
+      perfilPorNombre: new Map(
+        perfiles.map((p) => [normalizar(p.nombre), p.perfilId]),
+      ),
+      nombrePorPerfil: new Map(perfiles.map((p) => [p.perfilId, p.nombre])),
+    };
+
+    const evaluadas = protegerAdministradores(
+      marcarRepetidas(crudas.map((c) => evaluarFila(c, contexto))),
+      contexto.fichas,
+    );
+
+    if (aplicar) await this.guardarPlanilla(evaluadas, contexto);
+
+    const cuantas = (accion: string) =>
+      evaluadas.filter((f) => f.accion === accion).length;
+
+    return {
+      aplicado: aplicar,
+      totalFilas: evaluadas.length,
+      aCrear: cuantas('CREAR'),
+      aActualizar: cuantas('ACTUALIZAR'),
+      sinCambios: cuantas('SIN_CAMBIOS'),
+      ignoradas: cuantas('IGNORADA'),
+      conError: cuantas('ERROR'),
+      filas: evaluadas.map((f) => ({
+        fila: f.fila,
+        nombre: f.nombre,
+        email: f.email,
+        accion: f.accion,
+        motivo: f.motivo,
+        cambios: f.cambios,
+      })),
+    };
+  }
+
+  /** Escribe las filas aprobadas. Todo o nada: una transacción para las dos acciones. */
+  private async guardarPlanilla(
+    filas: FilaEvaluada[],
+    contexto: ContextoEvaluacion,
+  ): Promise<void> {
+    const aplicables = filas.filter(
+      (f) => f.accion === 'CREAR' || f.accion === 'ACTUALIZAR',
+    );
+    if (aplicables.length === 0) return;
+
+    const ahora = new Date();
+    await this.repo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(UsuarioWorkflowEntity);
+
+      for (const f of aplicables) {
+        if (!f.retoolUserId) continue;
+        const existente = contexto.fichas.get(f.retoolUserId);
+
+        const ficha =
+          f.accion === 'CREAR'
+            ? repo.create({
+                retoolUserId: f.retoolUserId,
+                email: f.email,
+                tipoUsuario: 'COLABORADOR',
+                habilitado: true,
+                creadoEn: ahora,
+              })
+            : await repo.findOneByOrFail({ retoolUserId: f.retoolUserId });
+
+        const v = f.valores;
+        if (v.rut !== undefined) ficha.rut = v.rut;
+        if (v.nivelJerarquico !== undefined) {
+          ficha.nivelJerarquico = v.nivelJerarquico;
+        }
+        if (v.plazoSlaHoras !== undefined) ficha.plazoSlaHoras = v.plazoSlaHoras;
+        if (v.perfilId !== undefined) ficha.perfilId = v.perfilId;
+        if (v.habilitado !== undefined) ficha.habilitado = v.habilitado;
+        if (v.icono !== undefined) ficha.icono = v.icono;
+        if (v.observaciones !== undefined) ficha.observaciones = v.observaciones;
+        ficha.actualizadoEn = ahora;
+
+        // Una ficha recién creada no tenía correo si el Excel venía sin él.
+        if (!ficha.email) ficha.email = existente?.email ?? f.email;
+
+        await repo.save(ficha);
+      }
+    });
   }
 
   private aDto(
