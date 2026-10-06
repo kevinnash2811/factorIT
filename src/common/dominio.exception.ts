@@ -121,6 +121,36 @@ export class DominioException extends HttpException {
     );
   }
 
+  /** El usuario eligió algo que no se puede adjuntar (cantidad o tipo). */
+  static driveSeleccionInvalida(detalle: string): DominioException {
+    return new DominioException(
+      'VALIDACION',
+      'Selección de Drive no válida',
+      detalle,
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /** Google no entregó el contenido: token vencido, permisos o tamaño. */
+  static driveDescargaFallida(detalle: string): DominioException {
+    return new DominioException(
+      'VALIDACION',
+      'No se pudo traer el archivo desde Drive',
+      detalle,
+      HttpStatus.BAD_REQUEST,
+      true,
+    );
+  }
+
+  /** Ninguno de los archivos elegidos se pudo copiar. */
+  static driveSinArchivos(detalle: string): DominioException {
+    return new DominioException(
+      'VALIDACION',
+      'No se adjuntó ningún archivo de Drive',
+      detalle,
+      HttpStatus.BAD_REQUEST,
+    );
+  }
   static planillaIlegible(detalle: string): DominioException {
     return new DominioException(
       'VALIDACION',
