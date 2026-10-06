@@ -24,6 +24,7 @@ import {
 } from '@nestjs/swagger';
 import { SolicitudesService } from './solicitudes.service';
 import { ListarSolicitudesQueryDto } from './dto/listar-solicitudes-query.dto';
+import { ExportarSolicitudesQueryDto } from './dto/exportar-solicitudes-query.dto';
 import {
   esFormatoValido,
   extensionDe,
@@ -71,11 +72,10 @@ export class SolicitudesController {
     description: 'Por defecto xlsx.',
   })
   async exportar(
-    @Query() query: ListarSolicitudesQueryDto,
-    @Query('formato') formato: string | undefined,
+    @Query() query: ExportarSolicitudesQueryDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const elegido = esFormatoValido(formato) ? formato : 'xlsx';
+    const elegido = esFormatoValido(query.formato) ? query.formato : 'xlsx';
 
     // TODO: reemplazar `false` por el permiso real del usuario autenticado (Keycloak)
     const buffer =
